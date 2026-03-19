@@ -1,1 +1,105 @@
+import os
+import re
+from pathlib import Path
+import pandas as pd
+from .config import SEQ_LEN
 
+def _species_from_path(path):
+    name = os.path.basename(path)
+    m = re.search(r'([A-Za-z]+_[A-Za-z]+)_31\.txt$', name)
+    return m.group(1) if m else "Unknown"
+
+AA_RE = re.compile(r'^[ACDEFGHIKLMNPQRSTVWY\*]{31}$', re.IGNORECASE)
+
+def read_txt_auto(path, split_name):
+    p = Path(path)
+    assert p.exists(), f"Not found: {path}"
+
+    rows = []
+    with open(p, 'r', encoding='utf-8') as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln or ln.startswith('#'):
+                continue
+            rows.append(ln)
+
+    assert rows, f"Empty file: {path}"
+
+    parts = [re.split(r"[,\t ]+", r) for r in rows]
+    ncol = max(len(x) for x in parts)
+    parts = [x + [""] * (ncol - len(x)) for x in parts]
+    df = pd.DataFrame(parts)
+
+    if ncol >= 4:
+        seq_col = None
+        for c in range(ncol):
+            col_vals = df[c].astype(str)
+            ok = sum(1 for s in col_vals.head(20) if len(s) == 31 and AA_RE.match(s))
+            if ok >= min(5, len(col_vals.head(20))):
+                seq_col = c
+                break
+
+        label_col = ncol - 1
+        tokens = df[label_col].astype(str).str.strip().str.lower().unique()
+        if not set(tokens).issubset({"0","1","true","false","pos","neg","positive","negative","yes","no"}):
+            for c in range(ncol - 1, -1, -1):
+                s = df[c].astype(str).str.strip().str.lower()
+                if set(s.unique()).issubset({"0","1","true","false","pos","neg","positive","negative","yes","no"}):
+                    label_col = c
+                    break
+
+        assert seq_col is not None, f"Cannot infer sequence column in {path}"
+        other_cols = [c for c in range(ncol) if c not in (seq_col, label_col)]
+        pid_col, pos_col = (other_cols + [None, None])[:2]
+
+        data = pd.DataFrame({
+            "seq": df[seq_col].astype(str).str.strip().str.upper(),
+            "label": df[label_col].astype(str).str.strip(),
+        })
+        if pid_col is not None:
+            data["protein_id"] = df[pid_col].astype(str).str.strip()
+        if pos_col is not None:
+            data["position"] = df[pos_col].astype(str).str.strip()
+
+    else:
+        seq_col = None
+        for c in range(ncol):
+            ok = sum(1 for s in df[c].astype(str).head(20) if len(s) == 31 and AA_RE.match(s))
+            if ok >= min(5, len(df[c].head(20))):
+                seq_col = c
+                break
+
+        assert seq_col is not None, f"Cannot infer sequence column in {path}"
+
+        label_col = None
+        for c in range(ncol):
+            if c == seq_col:
+                continue
+            s = df[c].astype(str).str.strip().str.lower()
+            if set(s.unique()).issubset({"0","1","true","false","pos","neg","positive","negative","yes","no"}):
+                label_col = c
+                break
+        if label_col is None:
+            label_col = ncol - 1
+
+        data = pd.DataFrame({
+            "seq": df[seq_col].astype(str).str.strip().str.upper(),
+            "label": df[label_col].astype(str).str.strip(),
+        })
+
+    mapping = {
+        "1":1, "0":0, "true":1, "false":0,
+        "pos":1, "neg":0, "positive":1, "negative":0,
+        "yes":1, "no":0
+    }
+    data["label"] = data["label"].str.lower().map(mapping).fillna(0).astype(int)
+
+    before = len(data)
+    data = data[data["seq"].map(len) == SEQ_LEN].reset_index(drop=True)
+    if len(data) < before:
+        print(f"[{split_name}] dropped {before-len(data)} rows (len != {SEQ_LEN})")
+
+    data["species"] = _species_from_path(path)
+    data["split"] = split_name
+    print(f"[OK] {split_name}: {path} -> rows={len(data)} | species={data['species'].iloc[0]}")
+    return data
