@@ -1,5 +1,12 @@
-numpy
-pandas
-torch
-matplotlib
-scikit-learn
+## Requirements
+
+- Python 3.8.20
+- PyTorch 2.4.1+cu121
+- PyTorch Geometric 2.6.1
+- scikit-learn 1.3.2
+- NumPy 1.24.3
+- pandas 2.0.3
+- Matplotlib 3.7.5
+- CUDA 12.1
+
+Experiments reported in the manuscript were performed using an NVIDIA GeForce RTX 4090 GPU.
